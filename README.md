@@ -14,14 +14,14 @@ Given an input string, pretok does the following.
 
 ## Examples
 
-Whitespace typically separates tokens and is stripped outside of quoted strings.
+Whitespace typically separates pretokens and is stripped outside of quoted strings.
 
     let mut pretok = PreTokenizer::new("Hello World!");
     assert!(pretok.next() == Some(Pretoken{s:"Hello", line:1, offset:0}));
     assert!(pretok.next() == Some(Pretoken{s:"World!", line:1, offset:6}));
     assert!(pretok.next() == None);
 
-Comments are stripped and may also delineate tokens.
+Comments are stripped and may also delineate pretokens.
 
     let mut pretok = PreTokenizer::new("x/*y*/z");
     assert!(pretok.next() == Some(Pretoken{s:"x", line:1, offset:0}));
@@ -33,14 +33,14 @@ Comments are stripped and may also delineate tokens.
     assert!(pretok.next() == Some(Pretoken{s:"y", line:2, offset:2}));
     assert!(pretok.next() == None);
 
-Quoted strings are a single token.
+Quoted strings are a single pretoken.
 
     let mut pretok = PreTokenizer::new("Hello \"W o r l d!\"");
     assert!(pretok.next() == Some(Pretoken{s:"Hello", line:1, offset:0}));
     assert!(pretok.next() == Some(Pretoken{s:"\"W o r l d!\"", line:1, offset:6}));
     assert!(pretok.next() == None);
 
-Quoted strings create a single token separate from the surrounding token(s).
+Quoted strings create a single pretoken separate from the surrounding pretoken(s).
 
     let mut pretok = PreTokenizer::new("x+\"h e l l o\"+z");
     assert!(pretok.next() == Some(Pretoken{s:"x+", line:1, offset:0}));
@@ -50,7 +50,7 @@ Quoted strings create a single token separate from the surrounding token(s).
 
 
 ## Unit Testing
-Pretok support unit tests.
+Pretok supports unit tests.
 
     cargo test
 
