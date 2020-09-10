@@ -8,7 +8,7 @@
 use strcursor::StrCursor;
 
 /// Track information about pretokens
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Pretoken<'a> {
     /// The UTF-8 string for this pretoken
     pub s: &'a str,
@@ -662,6 +662,48 @@ mod tests {
         assert_eq!(t.line, 3);
         assert_eq!(t.s, "z");
     }
+
+    #[test]
+    fn pretokenizer_test_31() {
+        let mut pretok = PreTokenizer::new("x/*y*/z");
+        assert!(pretok.next() == Some(Pretoken{s:"x", line:1, offset:0}));
+        assert!(pretok.next() == Some(Pretoken{s:"z", line:1, offset:6}));
+        assert!(pretok.next() == None);
+    }
+
+    #[test]
+    fn pretokenizer_test_32() {
+        let mut pretok = PreTokenizer::new("Hello World!");
+        assert!(pretok.next() == Some(Pretoken{s:"Hello", line:1, offset:0}));
+        assert!(pretok.next() == Some(Pretoken{s:"World!", line:1, offset:6}));
+        assert!(pretok.next() == None);
+    }
+
+    #[test]
+    fn pretokenizer_test_33() {
+        let mut pretok = PreTokenizer::new("Hello \"W o r l d!\"");
+        assert!(pretok.next() == Some(Pretoken{s:"Hello", line:1, offset:0}));
+        assert!(pretok.next() == Some(Pretoken{s:"\"W o r l d!\"", line:1, offset:6}));
+        assert!(pretok.next() == None);
+    }
+
+    #[test]
+    fn pretokenizer_test_34() {
+        let mut pretok = PreTokenizer::new("x\ny//z");
+        assert!(pretok.next() == Some(Pretoken{s:"x", line:1, offset:0}));
+        assert!(pretok.next() == Some(Pretoken{s:"y", line:2, offset:2}));
+        assert!(pretok.next() == None);
+    }
+
+    #[test]
+    fn pretokenizer_test_35() {
+        let mut pretok = PreTokenizer::new("x+\"h e l l o\"+z");
+        assert!(pretok.next() == Some(Pretoken{s:"x+", line:1, offset:0}));
+        assert!(pretok.next() == Some(Pretoken{s:"\"h e l l o\"", line:1, offset:2}));
+        assert!(pretok.next() == Some(Pretoken{s:"+z", line:1, offset:13}));
+        assert!(pretok.next() == None);
+    }
+
 
 }
 
