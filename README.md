@@ -64,7 +64,7 @@ To run fuzz tests:
 
 You can leave the compiler on the nightly build or switch back to stable with:
 
-    rust default stable
+    rustup default stable
 
 Fuzz tests run until stopped with Ctrl-C.  In my experience, fuzz tests will catch a problem almost immediately or not at all.
 
