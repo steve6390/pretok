@@ -19,7 +19,7 @@
 //!
 //! ## Examples
 //!
-//! Whitespace typically separates pretokens and is stripped outside of quoted strings.
+//! Whitespace typically separates [Pretoken]s and is stripped outside of quoted strings.
 //! ```
 //!     use pretok::{Pretokenizer, Pretoken};
 //!     let mut pt = Pretokenizer::new("Hello World!");
@@ -27,7 +27,7 @@
 //!     assert!(pt.next() == Some(Pretoken{s:"World!", line:1, offset:6}));
 //!     assert!(pt.next() == None);
 //! ```
-//! Comments are stripped and may also delineate pretokens.
+//! Comments are stripped and may also delineate [Pretoken]s.
 //! ```
 //!     use pretok::{Pretokenizer, Pretoken};
 //!     let mut pt = Pretokenizer::new("x/*y*/z");
@@ -40,7 +40,7 @@
 //!     assert!(pt.next() == Some(Pretoken{s:"y", line:2, offset:2}));
 //!     assert!(pt.next() == None);
 //! ```
-//! Quoted strings are a single pretoken.
+//! Quoted strings are a single [Pretoken].
 //! ```
 //!     use pretok::{Pretokenizer, Pretoken};
 //!     let mut pt = Pretokenizer::new("Hello \"W o r l d!\"");
@@ -48,7 +48,7 @@
 //!     assert!(pt.next() == Some(Pretoken{s:"\"W o r l d!\"", line:1, offset:6}));
 //!     assert!(pt.next() == None);
 //! ```
-//! Quoted strings create a single pretoken separate from the surrounding pretoken(s).
+//! Quoted strings create a single [Pretoken] separate from the surrounding pretoken(s).
 //! ```
 //!     use pretok::{Pretokenizer, Pretoken};
 //!     let mut pt = Pretokenizer::new("x+\"h e l l o\"+z");
@@ -60,9 +60,9 @@
 //!
 //! ## Unit Testing
 //! Pretok supports unit tests.
-//! ```ignore
-//!     cargo test
-//! ```
+//! <pre>
+//! cargo test
+//! </pre>
 //! ## Fuzz Testing
 //! Pretok supports fuzz tests.  Fuzz testing starts from a corpus of random
 //! inputs and then further randomizes those inputs to try to cause crashes and
@@ -70,27 +70,27 @@
 //! nightly build.
 //!
 //! To run fuzz tests:
-//! ```ignore
-//!     rustup default nightly
-//!     cargo fuzz run fuzz_target_1
-//! ```
+//! <pre>
+//! rustup default nightly
+//! cargo fuzz run fuzz_target_1
+//! </pre>
 //! You can leave the compiler on the nightly build or switch back to stable
 //! with:
-//! ```ignore
-//!     rustup default stable
-//! ```
+//! <pre>
+//! rustup default stable
+//! </pre>
 //! Fuzz tests run until stopped with Ctrl-C.  In my experience, fuzz tests will
 //! catch a problem almost immediately or not at all.
 //!
 //! Cargo fuzz use LLVM's libFuzzer internally, which provides a vast array of
 //! runtime options.  To see thh options using the nightly compiler build:
-//! ```ignore
-//!     cargo fuzz run fuzz_target_1 -- -help=1
-//! ```
+//! <pre>
+//! cargo fuzz run fuzz_target_1 -- -help=1
+//! </pre>
 //! For example, setting a smaller 5 second timeout for hangs:
-//! ```ignore
-//!     cargo fuzz run fuzz_target_1 -- -timeout=5
-//! ```
+//! <pre>
+//! cargo fuzz run fuzz_target_1 -- -timeout=5
+//! </pre>
 //!
 #![warn(clippy::all)]
 #![warn(missing_docs)]
@@ -123,7 +123,26 @@ impl<'a> Pretoken<'a> {
     }
 }
 
-/// The Pretokenizer object.
+
+/// The Pretokenizer is an iterator that produces Option<[Pretoken]> objects over
+/// an input string.
+///
+/// The Pretokenizer has a simple interface with only new() and next() functions.
+/// ```
+/// use pretok::{Pretokenizer, Pretoken};
+/// let pt = Pretokenizer::new("a+b c// stuff\nd");
+/// for tok in pt {
+///     println!("{} found on line {}, offset {}",
+///             tok.s, tok.line, tok.offset);
+/// }
+/// ```
+/// <pre>
+/// Produces the following output:
+/// a+b found on line 1, offset 0
+/// c found on line 1, offset 4
+/// d found on line 2, offset 14
+/// </pre>
+
 #[derive(Clone, Debug)]
 pub struct Pretokenizer<'a> {
     /// Cursor to the current code point in the input string
@@ -142,7 +161,7 @@ impl<'a> Pretokenizer<'a> {
         }
     }
 
-    pub fn make_pretok(&mut self, end: StrCursor<'a>) -> Option<Pretoken<'a>> {
+    fn make_pretok(&mut self, end: StrCursor<'a>) -> Option<Pretoken<'a>> {
         // If the current position hasn't moved, then return None.
         // This check simplifies corner cases like end-of-input.
         if end == self.pos {
@@ -752,6 +771,15 @@ mod tests {
         assert_eq!(t.offset, 16);
         assert_eq!(t.line, 3);
         assert_eq!(t.s, "z");
+    }
+
+    #[test]
+    fn pretokenizer_test_31() {
+        let pt = Pretokenizer::new("a+b c// stuff\nd");
+        for tok in pt {
+            println!("{} found on line {}, offset {}",
+                    tok.s, tok.line, tok.offset);
+        }
     }
 }
 
