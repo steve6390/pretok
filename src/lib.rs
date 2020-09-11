@@ -2,9 +2,10 @@
 // See LICENSE.txt.
 //! # pretok
 //!
-//! Pretok is a pre-tokenizer for C-like syntaxes.  Pretok simplifies subsequent
-//! tokenizers by handling line and block comments, whitespace and strings.
-//! Pretok operates as an iterator over an input string of UTF-8 code points.
+//! Pretok is a pre-tokenizer (or pre-lexer) for C-like syntaxes.  Pretok
+//! simplifies subsequent lexers by handling line and block comments,
+//! whitespace and strings. Pretok operates as an iterator over an input string
+//! of UTF-8 code points.
 //!
 //! Given an input string, pretok does the following.
 //! * Implements the iterator trait where ``next()`` returns a sequence of
@@ -16,6 +17,18 @@
 //! * After above filters, returns ``Pretokens`` usually delineated by whitespace.
 //! * Returns the line number and byte offset of each pretoken
 //!
+//! ## Motivation
+//! Common computer language features such comments, line number tracking,
+//! whitespace tolerance, etc. introduce corner cases that can make lexing
+//! awkward.  By imposing a few opinions, the Pretokenizer solves these problems
+//! at the earliest stage of processing. This preprocessing normalizes the input
+//! stream and simplifies subsequent processing.
+//!
+//! # Basic Use
+//! The [Pretokenizer] is an iterator returning a sequence of [Pretoken] objects
+//! from an input string reference.  Normally each returned [Pretoken]
+//! represents at least one actual language token.  A subsequent lexing step
+//! would split [Pretoken]s into language tokens as needed.
 //!
 //! ## Examples
 //!

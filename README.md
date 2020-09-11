@@ -55,24 +55,19 @@ Pretok supports unit tests.
     cargo test
 
 ## Fuzz Testing
-Pretok supports fuzz tests.  Fuzz testing starts from a corpus of random inputs and then further randomizes those inputs to try to cause crashes and hangs.  At the time of writing (Rust 1.46.0), fuzz testing required the nightly build.
+Pretok supports fuzz tests.  Fuzz testing starts from a corpus of random inputs and then further randomizes those inputs to try to cause crashes and hangs.  At the time of writing (Rust 1.46.0), fuzz testing **required the nightly build**.
 
 To run fuzz tests:
 
-    rustup default nightly
-    cargo fuzz run fuzz_target_1
-
-You can leave the compiler on the nightly build or switch back to stable with:
-
-    rustup default stable
+    cargo +nightly fuzz run fuzz_target_1
 
 Fuzz tests run until stopped with Ctrl-C.  In my experience, fuzz tests will catch a problem almost immediately or not at all.
 
-Cargo fuzz use LLVM's libFuzzer internally, which provides a vast array of runtime options.  To see thh options using the nightly compiler build:
+Cargo fuzz uses LLVM's libFuzzer internally, which provides a vast array of runtime options.  To see thh options using the nightly compiler build:
 
-    cargo fuzz run fuzz_target_1 -- -help=1
+    cargo +nightly fuzz run fuzz_target_1 -- -help=1
 
 For example, setting a smaller 5 second timeout for hangs:
 
-    cargo fuzz run fuzz_target_1 -- -timeout=5
+    cargo +nightly fuzz run fuzz_target_1 -- -timeout=5
 
