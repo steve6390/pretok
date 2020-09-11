@@ -1,64 +1,155 @@
-// Pretok returns pretokens, which are filtered strings in the
-// input file.  The pre-tokenizer does the following
-// * Skips whitespace and comments
-// * Returns pretoken strings from next()
-// * Records line and byte offset for each pretoken
-
+// Copyright 2020, Steve King
+// See LICENSE.txt.
+//! # pretok
+//!
+//! Pretok is a pre-tokenizer for C-like syntaxes.  Pretok simplifies subsequent
+//! tokenizers by handling line and block comments, whitespace and strings.
+//! Pretok operates as an iterator over an input string of UTF-8 code points.
+//!
+//! Given an input string, pretok does the following.
+//! * Implements the iterator trait where ``next()`` returns a sequence of
+//!   ``Option<Pretoken>`` structures.
+//! * Filters ``// line comments`` from the input string.
+//! * Filters ``/* block comments */`` from the input string
+//! * Returns ``"quoted strings with \"escapes\""`` as a single ``Pretoken``.
+//! * Skips whitespace characters.
+//! * After above filters, returns ``Pretokens`` usually delineated by whitespace.
+//! * Returns the line number and byte offset of each pretoken
+//!
+//!
+//! ## Examples
+//!
+//! Whitespace typically separates pretokens and is stripped outside of quoted strings.
+//! ```
+//!     use pretok::{Pretokenizer, Pretoken};
+//!     let mut pt = Pretokenizer::new("Hello World!");
+//!     assert!(pt.next() == Some(Pretoken{s:"Hello", line:1, offset:0}));
+//!     assert!(pt.next() == Some(Pretoken{s:"World!", line:1, offset:6}));
+//!     assert!(pt.next() == None);
+//! ```
+//! Comments are stripped and may also delineate pretokens.
+//! ```
+//!     use pretok::{Pretokenizer, Pretoken};
+//!     let mut pt = Pretokenizer::new("x/*y*/z");
+//!     assert!(pt.next() == Some(Pretoken{s:"x", line:1, offset:0}));
+//!     assert!(pt.next() == Some(Pretoken{s:"z", line:1, offset:6}));
+//!     assert!(pt.next() == None);
+//!
+//!     let mut pt = Pretokenizer::new("x\ny//z");
+//!     assert!(pt.next() == Some(Pretoken{s:"x", line:1, offset:0}));
+//!     assert!(pt.next() == Some(Pretoken{s:"y", line:2, offset:2}));
+//!     assert!(pt.next() == None);
+//! ```
+//! Quoted strings are a single pretoken.
+//! ```
+//!     use pretok::{Pretokenizer, Pretoken};
+//!     let mut pt = Pretokenizer::new("Hello \"W o r l d!\"");
+//!     assert!(pt.next() == Some(Pretoken{s:"Hello", line:1, offset:0}));
+//!     assert!(pt.next() == Some(Pretoken{s:"\"W o r l d!\"", line:1, offset:6}));
+//!     assert!(pt.next() == None);
+//! ```
+//! Quoted strings create a single pretoken separate from the surrounding pretoken(s).
+//! ```
+//!     use pretok::{Pretokenizer, Pretoken};
+//!     let mut pt = Pretokenizer::new("x+\"h e l l o\"+z");
+//!     assert!(pt.next() == Some(Pretoken{s:"x+", line:1, offset:0}));
+//!     assert!(pt.next() == Some(Pretoken{s:"\"h e l l o\"", line:1, offset:2}));
+//!     assert!(pt.next() == Some(Pretoken{s:"+z", line:1, offset:13}));
+//!     assert!(pt.next() == None);
+//! ```
+//!
+//! ## Unit Testing
+//! Pretok supports unit tests.
+//! ```ignore
+//!     cargo test
+//! ```
+//! ## Fuzz Testing
+//! Pretok supports fuzz tests.  Fuzz testing starts from a corpus of random
+//! inputs and then further randomizes those inputs to try to cause crashes and
+//! hangs.  At the time of writing (Rust 1.46.0), fuzz testing required the
+//! nightly build.
+//!
+//! To run fuzz tests:
+//! ```ignore
+//!     rustup default nightly
+//!     cargo fuzz run fuzz_target_1
+//! ```
+//! You can leave the compiler on the nightly build or switch back to stable
+//! with:
+//! ```ignore
+//!     rustup default stable
+//! ```
+//! Fuzz tests run until stopped with Ctrl-C.  In my experience, fuzz tests will
+//! catch a problem almost immediately or not at all.
+//!
+//! Cargo fuzz use LLVM's libFuzzer internally, which provides a vast array of
+//! runtime options.  To see thh options using the nightly compiler build:
+//! ```ignore
+//!     cargo fuzz run fuzz_target_1 -- -help=1
+//! ```
+//! For example, setting a smaller 5 second timeout for hangs:
+//! ```ignore
+//!     cargo fuzz run fuzz_target_1 -- -timeout=5
+//! ```
+//!
 #![warn(clippy::all)]
+#![warn(missing_docs)]
+#![warn(missing_doc_code_examples)]
 use strcursor::StrCursor;
 
-/// Track information about pretokens
+/// A pretoken object contains a slice of the `Pretokenizer` input string
+/// with lifetime a.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Pretoken<'a> {
-    /// The UTF-8 string for this pretoken
+    /// The UTF-8 string slice.
     pub s: &'a str,
-
-    /// Line number > 0 start the start of this pretoken
+    /// Number > 0 of the _last_ line in this pretoken.
     pub line: usize,
-
-    /// The byte offset of the first character in the pretoken
+    /// The byte offset of the first character in the pretoken.
     pub offset: usize,
 }
 
 impl<'a> Pretoken<'a> {
-    // The string for this pretoken is the slice between the start and end cursors
-    pub fn new(start: StrCursor<'a>, end: StrCursor<'a>, line: usize,
-            offset: usize) -> Pretoken<'a> {
+    /// The string for this pretoken is the slice between the specified cursors.
+    /// * `start`: The starting code point (inclusive).
+    /// * `end`: The end code point (exclusive).
+    /// * `offset`: The byte offset of `start` from the front
+    ///             of the string used to initialize the Pretokenizer.
+    pub fn new(
+        start: StrCursor<'a>,
+        end: StrCursor<'a>, line: usize,
+        offset: usize) -> Pretoken<'a> {
         Pretoken{ s:start.slice_between(end).unwrap(), line, offset}
     }
 }
 
-/******************************************************************************
- * Tokenizer
- *****************************************************************************/
-pub struct PreTokenizer<'input> {
-    /// Iterator to the current code point offset in the input string
-    /// This iterator returns a pair with:
-    /// 1) the next UTF-8 character, which may occupy more than one byte
-    /// 2) The byte offset into the string
-    pos: StrCursor<'input>,
+/// The Pretokenizer object.
+#[derive(Clone, Debug)]
+pub struct Pretokenizer<'a> {
+    /// Cursor to the current code point in the input string
+    pos: StrCursor<'a>,
 
     /// The current number of newlines encountered
     line: usize,
 }
 
-impl<'input> PreTokenizer<'input> {
+impl<'a> Pretokenizer<'a> {
     /// Create a new tokenizer
-    pub fn new(s: &'input str) -> PreTokenizer {
-        PreTokenizer{
+    pub fn new(s: &'a str) -> Pretokenizer {
+        Pretokenizer{
             pos: StrCursor::new_at_start(s),
             line: 1,  // Line number are not zero-based
         }
     }
 
-    pub fn make_pretok(&mut self, end: StrCursor<'input>) -> Option<Pretoken<'input>> {
+    pub fn make_pretok(&mut self, end: StrCursor<'a>) -> Option<Pretoken<'a>> {
         // If the current position hasn't moved, then return None.
         // This check simplifies corner cases like end-of-input.
         if end == self.pos {
             return None;
         }
 
-        // Update the state of the pretokenizer to the end of this pretoken.
+        // Update the state of the Pretokenizer to the end of this pretoken.
         let start = self.pos;
         self.pos = end;
         Some(Pretoken::new(start, end, self.line, start.byte_pos()))
@@ -68,7 +159,7 @@ impl<'input> PreTokenizer<'input> {
 /// Advances the internal iterator to the next pretoken. Skips whitespace
 /// and comments. If the result is OK(None), then we successfully reached
 /// end of the input string.
-impl <'a> std::iter::Iterator for PreTokenizer<'a> {
+impl <'a> std::iter::Iterator for Pretokenizer<'a> {
     type Item = Pretoken<'a>;
     fn next(&mut self) -> Option<Self::Item> {
 
@@ -294,13 +385,13 @@ mod tests {
 
     #[test]
     fn pretokenizer_test_0() {
-        let mut pretok = PreTokenizer::new("");
-        assert!(pretok.next().is_none());
+        let mut pt = Pretokenizer::new("");
+        assert!(pt.next().is_none());
     }
     #[test]
     fn pretokenizer_test_1() {
-        let mut pretok = PreTokenizer::new("foo");
-        let t = pretok.next();
+        let mut pt = Pretokenizer::new("foo");
+        let t = pt.next();
         assert!(t.is_some());
         let t = t.unwrap();
         assert_eq!(t.offset, 0);
@@ -310,8 +401,8 @@ mod tests {
 
     #[test]
     fn pretokenizer_test_2() {
-        let mut pretok = PreTokenizer::new("foo\n");
-        let t = pretok.next();
+        let mut pt = Pretokenizer::new("foo\n");
+        let t = pt.next();
         assert!(t.is_some());
         let t = t.unwrap();
         assert_eq!(t.offset, 0);
@@ -321,8 +412,8 @@ mod tests {
 
     #[test]
     fn pretokenizer_test_3() {
-        let mut pretok = PreTokenizer::new("\nfoo");
-        let t = pretok.next();
+        let mut pt = Pretokenizer::new("\nfoo");
+        let t = pt.next();
         assert!(t.is_some());
         let t = t.unwrap();
         assert_eq!(t.offset, 1);
@@ -332,8 +423,8 @@ mod tests {
 
     #[test]
     fn pretokenizer_test_4() {
-        let mut pretok = PreTokenizer::new("\nfoo\n");
-        let t = pretok.next();
+        let mut pt = Pretokenizer::new("\nfoo\n");
+        let t = pt.next();
         assert!(t.is_some());
         let t = t.unwrap();
         assert_eq!(t.offset, 1);
@@ -343,8 +434,8 @@ mod tests {
 
     #[test]
     fn pretokenizer_test_5() {
-        let mut pretok = PreTokenizer::new("/* */foo");
-        let t = pretok.next();
+        let mut pt = Pretokenizer::new("/* */foo");
+        let t = pt.next();
         assert!(t.is_some());
         let t = t.unwrap();
         assert_eq!(t.offset, 5);
@@ -354,8 +445,8 @@ mod tests {
 
     #[test]
     fn pretokenizer_test_6() {
-        let mut pretok = PreTokenizer::new("\n/* */foo");
-        let t = pretok.next();
+        let mut pt = Pretokenizer::new("\n/* */foo");
+        let t = pt.next();
         assert!(t.is_some());
         let t = t.unwrap();
         assert_eq!(t.offset, 6);
@@ -365,8 +456,8 @@ mod tests {
 
     #[test]
     fn pretokenizer_test_7() {
-        let mut pretok = PreTokenizer::new("\n/* */\nfoo");
-        let t = pretok.next();
+        let mut pt = Pretokenizer::new("\n/* */\nfoo");
+        let t = pt.next();
         assert!(t.is_some());
         let t = t.unwrap();
         assert_eq!(t.offset, 7);
@@ -376,29 +467,29 @@ mod tests {
 
     #[test]
     fn pretokenizer_test_8() {
-        let mut pretok = PreTokenizer::new("// bar");
-        let t = pretok.next();
+        let mut pt = Pretokenizer::new("// bar");
+        let t = pt.next();
         assert!(t.is_none());
     }
 
     #[test]
     fn pretokenizer_test_9() {
-        let mut pretok = PreTokenizer::new("\n// bar");
-        let t = pretok.next();
+        let mut pt = Pretokenizer::new("\n// bar");
+        let t = pt.next();
         assert!(t.is_none());
     }
 
     #[test]
     fn pretokenizer_test_10() {
-        let mut pretok = PreTokenizer::new("// bar\n");
-        let t = pretok.next();
+        let mut pt = Pretokenizer::new("// bar\n");
+        let t = pt.next();
         assert!(t.is_none());
     }
 
     #[test]
     fn pretokenizer_test_11() {
-        let mut pretok = PreTokenizer::new("// bar\nfoo");
-        let t = pretok.next();
+        let mut pt = Pretokenizer::new("// bar\nfoo");
+        let t = pt.next();
         assert!(t.is_some());
         let t = t.unwrap();
         assert_eq!(t.offset, 7);
@@ -408,8 +499,8 @@ mod tests {
 
     #[test]
     fn pretokenizer_test_12() {
-        let mut pretok = PreTokenizer::new("// bar\n\nfoo");
-        let t = pretok.next();
+        let mut pt = Pretokenizer::new("// bar\n\nfoo");
+        let t = pt.next();
         assert!(t.is_some());
         let t = t.unwrap();
         assert_eq!(t.offset, 8);
@@ -419,8 +510,8 @@ mod tests {
 
     #[test]
     fn pretokenizer_test_13() {
-        let mut pretok = PreTokenizer::new("\"");
-        let t = pretok.next();
+        let mut pt = Pretokenizer::new("\"");
+        let t = pt.next();
         assert!(t.is_some());
         let t = t.unwrap();
         assert_eq!(t.offset, 0);
@@ -430,8 +521,8 @@ mod tests {
 
     #[test]
     fn pretokenizer_test_14() {
-        let mut pretok = PreTokenizer::new("\"\"");
-        let t = pretok.next();
+        let mut pt = Pretokenizer::new("\"\"");
+        let t = pt.next();
         assert!(t.is_some());
         let t = t.unwrap();
         assert_eq!(t.offset, 0);
@@ -441,8 +532,8 @@ mod tests {
 
     #[test]
     fn pretokenizer_test_15() {
-        let mut pretok = PreTokenizer::new("\"x\"");
-        let t = pretok.next();
+        let mut pt = Pretokenizer::new("\"x\"");
+        let t = pt.next();
         assert!(t.is_some());
         let t = t.unwrap();
         assert_eq!(t.offset, 0);
@@ -452,8 +543,8 @@ mod tests {
 
     #[test]
     fn pretokenizer_test_16() {
-        let mut pretok = PreTokenizer::new("\" x\"");
-        let t = pretok.next();
+        let mut pt = Pretokenizer::new("\" x\"");
+        let t = pt.next();
         assert!(t.is_some());
         let t = t.unwrap();
         assert_eq!(t.offset, 0);
@@ -463,8 +554,8 @@ mod tests {
 
     #[test]
     fn pretokenizer_test_17() {
-        let mut pretok = PreTokenizer::new("\" x x \"");
-        let t = pretok.next();
+        let mut pt = Pretokenizer::new("\" x x \"");
+        let t = pt.next();
         assert!(t.is_some());
         let t = t.unwrap();
         assert_eq!(t.offset, 0);
@@ -474,15 +565,15 @@ mod tests {
 
     #[test]
     fn pretokenizer_test_18() {
-        let mut pretok = PreTokenizer::new("//\" x x \"");
-        let t = pretok.next();
+        let mut pt = Pretokenizer::new("//\" x x \"");
+        let t = pt.next();
         assert!(t.is_none());
     }
 
     #[test]
     fn pretokenizer_test_19() {
-        let mut pretok = PreTokenizer::new("\"// x x \"");
-        let t = pretok.next();
+        let mut pt = Pretokenizer::new("\"// x x \"");
+        let t = pt.next();
         assert!(t.is_some());
         let t = t.unwrap();
         assert_eq!(t.offset, 0);
@@ -492,8 +583,8 @@ mod tests {
 
     #[test]
     fn pretokenizer_test_20() {
-        let mut pretok = PreTokenizer::new("\" /* x x */ \"");
-        let t = pretok.next();
+        let mut pt = Pretokenizer::new("\" /* x x */ \"");
+        let t = pt.next();
         assert!(t.is_some());
         let t = t.unwrap();
         assert_eq!(t.offset, 0);
@@ -503,8 +594,8 @@ mod tests {
 
     #[test]
     fn pretokenizer_test_21() {
-        let mut pretok = PreTokenizer::new("\" \\\" x \"");
-        let t = pretok.next();
+        let mut pt = Pretokenizer::new("\" \\\" x \"");
+        let t = pt.next();
         assert!(t.is_some());
         let t = t.unwrap();
         assert_eq!(t.offset, 0);
@@ -514,8 +605,8 @@ mod tests {
 
     #[test]
     fn pretokenizer_test_22() {
-        let mut pretok = PreTokenizer::new("\" \\");
-        let t = pretok.next();
+        let mut pt = Pretokenizer::new("\" \\");
+        let t = pt.next();
         assert!(t.is_some());
         let t = t.unwrap();
         assert_eq!(t.offset, 0);
@@ -525,8 +616,8 @@ mod tests {
 
     #[test]
     fn pretokenizer_test_23() {
-        let mut pretok = PreTokenizer::new("\" \\\"");
-        let t = pretok.next();
+        let mut pt = Pretokenizer::new("\" \\\"");
+        let t = pt.next();
         assert!(t.is_some());
         let t = t.unwrap();
         assert_eq!(t.offset, 0);
@@ -537,8 +628,8 @@ mod tests {
     #[test]
     fn pretokenizer_test_24() {
         // Found by fuzz testing
-        let mut pretok = PreTokenizer::new("\" x\nx\"");
-        let t = pretok.next();
+        let mut pt = Pretokenizer::new("\" x\nx\"");
+        let t = pt.next();
         assert!(t.is_some());
         let t = t.unwrap();
         assert_eq!(t.offset, 0);
@@ -550,8 +641,8 @@ mod tests {
 
     #[test]
     fn pretokenizer_test_25() {
-        let mut pretok = PreTokenizer::new("x//x");
-        let t = pretok.next();
+        let mut pt = Pretokenizer::new("x//x");
+        let t = pt.next();
         assert!(t.is_some());
         let t = t.unwrap();
         assert_eq!(t.offset, 0);
@@ -561,8 +652,8 @@ mod tests {
 
     #[test]
     fn pretokenizer_test_26() {
-        let mut pretok = PreTokenizer::new("x/*x*/");
-        let t = pretok.next();
+        let mut pt = Pretokenizer::new("x/*x*/");
+        let t = pt.next();
         assert!(t.is_some());
         let t = t.unwrap();
         assert_eq!(t.offset, 0);
@@ -572,15 +663,15 @@ mod tests {
 
     #[test]
     fn pretokenizer_test_27() {
-        let mut pretok = PreTokenizer::new("x/*y*/z");
-        let t = pretok.next();
+        let mut pt = Pretokenizer::new("x/*y*/z");
+        let t = pt.next();
         assert!(t.is_some());
         let t = t.unwrap();
         assert_eq!(t.offset, 0);
         assert_eq!(t.line, 1);
         assert_eq!(t.s, "x");
         // Now get the z.
-        let t = pretok.next();
+        let t = pt.next();
         assert!(t.is_some());
         let t = t.unwrap();
         assert_eq!(t.offset, 6);
@@ -590,22 +681,22 @@ mod tests {
 
     #[test]
     fn pretokenizer_test_28() {
-        let mut pretok = PreTokenizer::new("x y z");
-        let t = pretok.next();
+        let mut pt = Pretokenizer::new("x y z");
+        let t = pt.next();
         assert!(t.is_some());
         let t = t.unwrap();
         assert_eq!(t.offset, 0);
         assert_eq!(t.line, 1);
         assert_eq!(t.s, "x");
         // Now get the 7.
-        let t = pretok.next();
+        let t = pt.next();
         assert!(t.is_some());
         let t = t.unwrap();
         assert_eq!(t.offset, 2);
         assert_eq!(t.line, 1);
         assert_eq!(t.s, "y");
         // Now get the z.
-        let t = pretok.next();
+        let t = pt.next();
         assert!(t.is_some());
         let t = t.unwrap();
         assert_eq!(t.offset, 4);
@@ -615,22 +706,22 @@ mod tests {
 
     #[test]
     fn pretokenizer_test_29() {
-        let mut pretok = PreTokenizer::new("  x\n y\n   z");
-        let t = pretok.next();
+        let mut pt = Pretokenizer::new("  x\n y\n   z");
+        let t = pt.next();
         assert!(t.is_some());
         let t = t.unwrap();
         assert_eq!(t.offset, 2);
         assert_eq!(t.line, 1);
         assert_eq!(t.s, "x");
         // Now get the 7.
-        let t = pretok.next();
+        let t = pt.next();
         assert!(t.is_some());
         let t = t.unwrap();
         assert_eq!(t.offset, 5);
         assert_eq!(t.line, 2);
         assert_eq!(t.s, "y");
         // Now get the z.
-        let t = pretok.next();
+        let t = pt.next();
         assert!(t.is_some());
         let t = t.unwrap();
         assert_eq!(t.offset, 10);
@@ -640,71 +731,28 @@ mod tests {
 
     #[test]
     fn pretokenizer_test_30() {
-        let mut pretok = PreTokenizer::new("  x // foo\ny\n   z");
-        let t = pretok.next();
+        let mut pt = Pretokenizer::new("  x // foo\ny\n   z");
+        let t = pt.next();
         assert!(t.is_some());
         let t = t.unwrap();
         assert_eq!(t.offset, 2);
         assert_eq!(t.line, 1);
         assert_eq!(t.s, "x");
         // Now get the 7.
-        let t = pretok.next();
+        let t = pt.next();
         assert!(t.is_some());
         let t = t.unwrap();
         assert_eq!(t.offset, 11);
         assert_eq!(t.line, 2);
         assert_eq!(t.s, "y");
         // Now get the z.
-        let t = pretok.next();
+        let t = pt.next();
         assert!(t.is_some());
         let t = t.unwrap();
         assert_eq!(t.offset, 16);
         assert_eq!(t.line, 3);
         assert_eq!(t.s, "z");
     }
-
-    #[test]
-    fn pretokenizer_test_31() {
-        let mut pretok = PreTokenizer::new("x/*y*/z");
-        assert!(pretok.next() == Some(Pretoken{s:"x", line:1, offset:0}));
-        assert!(pretok.next() == Some(Pretoken{s:"z", line:1, offset:6}));
-        assert!(pretok.next() == None);
-    }
-
-    #[test]
-    fn pretokenizer_test_32() {
-        let mut pretok = PreTokenizer::new("Hello World!");
-        assert!(pretok.next() == Some(Pretoken{s:"Hello", line:1, offset:0}));
-        assert!(pretok.next() == Some(Pretoken{s:"World!", line:1, offset:6}));
-        assert!(pretok.next() == None);
-    }
-
-    #[test]
-    fn pretokenizer_test_33() {
-        let mut pretok = PreTokenizer::new("Hello \"W o r l d!\"");
-        assert!(pretok.next() == Some(Pretoken{s:"Hello", line:1, offset:0}));
-        assert!(pretok.next() == Some(Pretoken{s:"\"W o r l d!\"", line:1, offset:6}));
-        assert!(pretok.next() == None);
-    }
-
-    #[test]
-    fn pretokenizer_test_34() {
-        let mut pretok = PreTokenizer::new("x\ny//z");
-        assert!(pretok.next() == Some(Pretoken{s:"x", line:1, offset:0}));
-        assert!(pretok.next() == Some(Pretoken{s:"y", line:2, offset:2}));
-        assert!(pretok.next() == None);
-    }
-
-    #[test]
-    fn pretokenizer_test_35() {
-        let mut pretok = PreTokenizer::new("x+\"h e l l o\"+z");
-        assert!(pretok.next() == Some(Pretoken{s:"x+", line:1, offset:0}));
-        assert!(pretok.next() == Some(Pretoken{s:"\"h e l l o\"", line:1, offset:2}));
-        assert!(pretok.next() == Some(Pretoken{s:"+z", line:1, offset:13}));
-        assert!(pretok.next() == None);
-    }
-
-
 }
 
 
