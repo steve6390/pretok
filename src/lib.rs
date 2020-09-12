@@ -27,10 +27,10 @@
 //!
 //! # Basic Use
 //! The [Pretokenizer](struct.Pretokenizer.html) is an iterator returning a
-//! sequence of [Pretoken] objects from an input string reference.  Normally
-//! each returned [Pretoken] represents at least one actual language token.  A
-//! subsequent lexing step would split [Pretoken]s into language tokens as
-//! needed.
+//! sequence of [Pretoken](struct.Pretoken.html) objects from an input string
+//! reference.  Normally, each returned [Pretoken](struct.Pretoken.html)
+//! represents at least one actual language token.  A subsequent lexing step
+//! would split [Pretoken]s into language specific tokens.
 //!
 //! ## Examples
 //!
